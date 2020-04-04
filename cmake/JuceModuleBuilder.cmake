@@ -1,0 +1,1 @@
+message(STATUS "JuceModuleBuilder module loaded")
