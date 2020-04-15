@@ -307,17 +307,26 @@ function(juce_resolve_modules_recurse
 
 endfunction()
 
-function(juce_resolve_modules _modules_to_resolve)
+function(juce_resolve_modules _modules_to_resolve _output_prefix)
 
-    foreach(_module_to_resolve ${ARGV})
+    foreach(_module_to_resolve "${_modules_to_resolve}")
 
         set_property(GLOBAL PROPERTY _juce_deps_recursion_depth 0)
 
         message("Resolving dependencies for ${_module_to_resolve}")
 
-        juce_resolve_modules_recurse(${_module_to_resolve} the_modules the_ext_deps 0)
+        set(output_module_deps_var "${_output_prefix}_${_module_to_resolve}_dependencies")
+        set(output_external_deps_var "${_output_prefix}_${_module_to_resolve}_external_dependencies")
 
-        message("")
+        juce_resolve_modules_recurse(${_module_to_resolve} ${output_module_deps_var} ${output_external_deps_var} 0)
+
+        list(REMOVE_ITEM ${output_module_deps_var} ${_module_to_resolve})
+
+        set(${output_module_deps_var} "${${output_module_deps_var}}" PARENT_SCOPE)
+        set(${output_external_deps_var} "${${output_external_deps_var}}" PARENT_SCOPE)
+
+        message(STATUS "Defined ${output_module_deps_var} as ${${output_module_deps_var}}")
+        message(STATUS "Defined ${output_external_deps_var} as ${${output_external_deps_var}}")
 
         set_property(GLOBAL PROPERTY _juce_deps_recursion_depth 0)
 

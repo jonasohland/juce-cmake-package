@@ -1,0 +1,29 @@
+message(STATUS "JUCE found")
+
+list(APPEND CMAKE_MODULE_PATH "@juce_installed_scripts_dir@")
+list(APPEND CMAKE_MODULE_PATH "@juce_installed_package_dir@")
+
+include(GitUtils)
+include(JuceModuleBuilder)
+include(JuceDependencies)
+include(CMakePackageConfigHelpers)
+include(@juce_main_target_export@)
+
+set(juce_root               "@juce_installed_juce_root@")
+set(juce_modules_dir        "@juce_installed_modules_dir@")
+set(juce_templates_dir      "@juce_installed_templates_dir@")
+set(juce_library_code_dir   "${CMAKE_CURRENT_BINARY_DIR}/JuceLibraryCode")
+
+if(NOT JUCE_DONT_GENERATE_TARGET)
+
+    message("${JUCE_FIND_COMPONENTS}")
+
+    juce_build_module(core JUCE_LIBRARY_CODE_DIR ${juce_library_code_dir} JUCE_SOURCES_LIST _juce_sources)
+
+    add_library(JUCELibrary STATIC ${_juce_sources})
+
+else()
+
+    message(STATUS "Not generating a JUCE library target")
+
+endif()
