@@ -47,6 +47,18 @@ function(_ini_list_last_element _list _out)
 
 endfunction()
 
+function(_ini_list_contains _list _val _out_var)
+
+    list(FIND ${_list} ${_val} _result)
+
+    if(NOT (_result EQUAL "-1"))
+        set(${_out_var} ON PARENT_SCOPE)
+    else()
+        set(${_out_var} OFF PARENT_SCOPE)
+    endif()
+
+endfunction()
+
 macro(_ini_mc_propagate_vars)
     set(_current_qs                         ${_current_qs}                          PARENT_SCOPE)
     set(_current_qs_val                     ${_current_qs_val}                      PARENT_SCOPE)
@@ -175,6 +187,9 @@ function(_ini_make_key_var _section_name _key_name _out_var)
     set(${_out_var} "_ini_zz_val_${_section_name}_${_key_name}" PARENT_SCOPE)
 endfunction()
 
+function(_ini_get_cached_keys_var_name _section _out_var)
+    set(${_out_var} "_ini_zz_do_cache_${_section}_keys" PARENT_SCOPE)
+endfunction()
 # -------------------------------------------------------------------------------------------------
 
 # parser functions
@@ -228,6 +243,8 @@ function(_ini_save_identifier _out_var)
 
     _ini_hex_arr_to_string("${_current_identifier}" _str)
 
+    # message(STATUS "Saved identifier ${_str}")
+
     string(STRIP "${_str}" _str)
     string(MAKE_C_IDENTIFIER ${_str} _str)
 
@@ -258,7 +275,7 @@ function(_ini_parser_find_section _char)
 
     if(_is_whitespace)
         return()
-    elseif(_char EQUAL ${_ini_c_sect_begin})
+    elseif(_char STREQUAL ${_ini_c_sect_begin})
         set(_parser_state ${_ini_pss_section})
     else()
         _ini_get_ascii(${_char} __achar)
@@ -273,7 +290,8 @@ function(_ini_parse_section _char)
     _ini_autoparse_comment(${_char})
     _ini_err_on_unicode(${_char} "section labels must not contain unicode characters")
 
-    if(_char EQUAL ${_ini_c_sect_end})
+    if(_char STREQUAL ${_ini_c_sect_end})
+
         _ini_save_identifier(_current_section)
 
         # message(STATUS "Append section ${_str}")
@@ -297,7 +315,7 @@ function(_ini_parse_key_or_section _char)
 
     if(NOT _is_whitespace)
 
-        if(_char EQUAL ${_ini_c_sect_begin})
+        if(_char STREQUAL ${_ini_c_sect_begin})
 
             set(_parser_state ${_ini_pss_section})
 
@@ -393,9 +411,20 @@ endfunction()
 
 function(parse_ini_file)
 
-    set(parse_ini_file_options NO_COLON_KV_DELIM NO_HASHSIGN_COMMENTS STRIP_VALUES)
+    set(parse_ini_file_options 
+        NO_COLON_KV_DELIM 
+        NO_HASHSIGN_COMMENTS 
+        STRIP_VALUES
+        NO_CACHE
+        NO_CACHE_CHECK)
 
-    cmake_parse_arguments(PARSE_ARGV 2 INI "${parse_ini_file_options}" ";" ";")
+    set(parse_ini_multival_keywords
+        CACHE_SECTIONS
+        CACHE_KEYS)
+
+    cmake_parse_arguments(PARSE_ARGV 2 INI 
+        "${parse_ini_file_options}" ";" 
+        "${parse_ini_multival_keywords}")
 
     message(STATUS "Parsing INI file ${ARGV0}")
 
@@ -418,11 +447,11 @@ function(parse_ini_file)
     set(_ini_c_nl               "0a")       # NL
     set(_ini_c_cr               "0d")       # CR
 
-    if(NOT (${_ARGS_NO_COLON_KV_DELIM}))
+    if(NOT (INI_NO_COLON_KV_DELIM))
         list(APPEND _ini_c_kv_delims "3a")  # :
     endif()
 
-    if(NOT _ARGS_NO_HASHSIGN_COMMENTS)
+    if(NOT INI_NO_HASHSIGN_COMMENTS)
         list(APPEND _ini_c_comments "23")   # #
     endif()
 
@@ -478,12 +507,41 @@ function(parse_ini_file)
 
     set("${__PREFIX}_SECTIONS" ${_sections} PARENT_SCOPE)
 
+    foreach(_sect_key_pair_str ${INI_CACHE_KEYS})
+        
+        string(REPLACE "::" ";" _sect_key_pair ${_sect_key_pair_str})
+        message(STATUS "${_sect_key_pair}")
+
+        list(LENGTH _sect_key_pair _sect_key_pair_length)
+
+        if(NOT (_sect_key_pair_length EQUAL 2))
+            message(FATAL_ERROR 
+                "Invalid argument ${_sect_key_pair_str}. Section and key must be separated by \"::\"")
+        endif()
+
+        list(GET _sect_key_pair 0 __sect)
+        list(GET _sect_key_pair 1 __key)
+
+        _ini_get_cached_keys_var_name(${__sect} _cached_keys_list_var)
+
+        message(STATUS "Cache to: ${_cached_keys_list_var}")
+
+        list(APPEND ${_cached_keys_list_var} ${__key})
+        
+    endforeach()
+    
+
     foreach(_section ${_sections})
 
         _ini_make_sect_keys_var(${_section} _int_key_list_var)
         ini_get_key_list_var(${__PREFIX} ${_section} _pub_key_list_var)
 
         set(${_pub_key_list_var} ${${_int_key_list_var}} PARENT_SCOPE)
+
+        # should we cache this section?
+        _ini_list_contains(INI_CACHE_SECTIONS ${_section} _cache_this_section)
+
+        message(STATUS "Cache section [${_section}] : ${_cache_this_section}")
 
         foreach(_key ${${_int_key_list_var}})
 
@@ -492,11 +550,24 @@ function(parse_ini_file)
 
             _ini_hex_arr_to_string("${${_var}}" _out_str)
 
+            if(NOT _cache_this_section)
+                _ini_get_cached_keys_var_name(${_section} _cached_keys_list_var)
+                _ini_list_contains(${_cached_keys_list_var} ${_key} _cache_this_key)
+            else()
+                set(_cache_this_key ON)
+            endif()
+
+            message(STATUS "Cache key [${_key}] ${_cache_this_key}")
+
             if(INI_STRIP_VALUES)
                 string(STRIP "${_out_str}" _out_str)
             endif()
 
-            set(${_pub_value_var} "${_out_str}" PARENT_SCOPE)
+            if(_cache_this_key)
+                set(${_pub_value_var} "${_out_str}" CACHE "Cached from ini file ${__FILE}" INTERNAL)
+            else()
+                set(${_pub_value_var} "${_out_str}" PARENT_SCOPE)
+            endif()
 
         endforeach()
 
