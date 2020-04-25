@@ -144,8 +144,6 @@ install(DIRECTORY ${juce_modules_dir}
 install(FILES ${juce_install_misc_files} DESTINATION ${juce_installed_juce_files_dir})
 
 parse_ini_file("${CMAKE_CURRENT_LIST_DIR}/test.ini" Test
-    CACHE_KEYS
-        audio_basics::osx_frameworks
-    STRIP_VALUES)
-
-message(STATUS ${Test_test_section_value})
+    STRIP_VALUES
+    CACHE_SECTIONS
+        graphics)

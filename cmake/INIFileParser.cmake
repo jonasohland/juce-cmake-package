@@ -258,7 +258,7 @@ endfunction()
 function(_ini_err_on_unicode _char _expected)
 
     _parse_unicode(${_char} _is_uni _ _)
-    _ini_reset_unicode_parser()
+    _ini_reset_unicode_parser() 
 
     if(_is_uni)
         _ini_parser_error("Unexpected unicode character, ${_expected}")
@@ -383,6 +383,74 @@ endfunction()
 
 # -------------------------------------------------------------------------------------------------
 
+# Chaching functions
+
+function(_ini_cache_set_original_file _prefix _file)
+
+    set("ini_cache_${_prefix}_source_file" 
+        "${_file}"
+        CACHE INTERNAL 
+        "Original file that was cached by the ini parser")
+
+endfunction()
+
+function(_ini_cache_get_original_file_var _prefix _out_var)
+    set(${_out_var} "ini_cache_${_prefix}_source_file" PARENT_SCOPE)
+endfunction()
+
+function(_ini_cache_get_original_file _prefix _out_var)
+    _ini_cache_get_original_file_var(${_prefix} _file_var)
+    set(${_out_var} "${${_file_var}}" PARENT_SCOPE)
+endfunction()
+
+function(_ini_cache_get_cached_file _prefix _out_var)
+
+    set(_cached_file_location_var "ini_cache_${_prefix}_cached_file")
+
+    if(NOT ${_cached_file_location_var})        
+        set(${_cached_file_location_var} "${CMAKE_CURRENT_BINARY_DIR}/ini/ini_${_prefix}_cache_check_file" CACHE INTERNAL "Location of a cached ini file")
+    endif()
+
+    set(${_out_var} ${${_cached_file_location_var}} PARENT_SCOPE)
+endfunction()
+
+function(_ini_cache_check _prefix _out_var)
+
+    _ini_cache_get_cached_file(${_prefix} _cached_file)
+    _ini_cache_get_original_file(${_prefix} _original_file)
+
+    if(NOT EXISTS "${_cached_file}")
+        set(${_out_var} OFF PARENT_SCOPE)
+        return()
+    endif()
+
+    if(${_original_file} STREQUAL "")
+        set(${_out_var} OFF PARENT_SCOPE)
+        return()
+    endif()
+
+    if(INI_NO_CACHE_CHECK)
+        set(${_out_var} ON PARENT_SCOPE)
+        return()
+    endif()
+
+    message(STATUS "Compare: ${_original_file} <-> ${_cached_file}")
+
+    if("${_original_file}" IS_NEWER_THAN "${_cached_file}")
+        set(${_out_var} OFF PARENT_SCOPE)
+    else()
+        set(${_out_var} ON PARENT_SCOPE)
+    endif()
+
+endfunction()
+
+function(_ini_cache_mark_valid _prefix _file)
+    _ini_cache_get_cached_file(${_prefix} _cached_file)
+    configure_file("${_file}" "${_cached_file}")
+endfunction()
+
+# -------------------------------------------------------------------------------------------------
+
 # Public API begins here
 
 function(ini_get_key_list_var _prefix _section_name _out_var)
@@ -405,7 +473,7 @@ function(ini_get_value _prefix _section _key _out_var)
     
     ini_get_value_var(${_prefix} ${_section} ${_key} _val)
 
-    set(${_out_var} ${{_val}} PARENT_SCOPE)
+    set(${_out_var} ${${_val}} PARENT_SCOPE)
 
 endfunction()
 
@@ -430,7 +498,24 @@ function(parse_ini_file)
 
     set(__FILE      ${ARGV0})
     set(__PREFIX    ${ARGV1})
-    
+
+    if(NOT INI_NO_CACHE)
+
+        message(STATUS "Checking cache...")
+
+        if((NOT INI_CACHE_SECTIONS) AND (NOT INI_CACHE_KEYS))
+            set(_cache_all ON)
+        endif()
+
+        _ini_cache_set_original_file(${__PREFIX} ${__FILE})
+        _ini_cache_check(${__PREFIX} _cache_is_valid)
+
+        if(_cache_is_valid)
+            return()
+        endif()
+
+    endif()
+
     set(_ini_pss_find_sect      fs)
     set(_ini_pss_section        s) 
     set(_ini_pss_k_or_s         i)
@@ -473,9 +558,6 @@ function(parse_ini_file)
     
     set(_parser_state ${_ini_pss_find_sect})
 
-    set(_current_value)
-    set(_current_section)
-    set(_sections)
     set(_line 1)
 
     foreach(_char_iter ${__chars})
@@ -490,8 +572,6 @@ function(parse_ini_file)
             _ini_parse_key(${_char_iter})
         elseif(${_parser_state} STREQUAL ${_ini_pss_value})
             _ini_parse_value(${_char_iter})
-        elseif(${_parser_state} STREQUAL ${_ini_pss_qs})
-
         endif()
 
         # count newlines for error messages
@@ -505,7 +585,11 @@ function(parse_ini_file)
 
     endforeach()
 
-    set("${__PREFIX}_SECTIONS" ${_sections} PARENT_SCOPE)
+    if(_cache_all)
+        set("${__PREFIX}_SECTIONS" ${_sections} CACHE INTERNAL "All sections cached for prefix ${__PREFIX}")
+    else()
+        set("${__PREFIX}_SECTIONS" ${_sections} PARENT_SCOPE)
+    endif()
 
     foreach(_sect_key_pair_str ${INI_CACHE_KEYS})
         
@@ -536,10 +620,19 @@ function(parse_ini_file)
         _ini_make_sect_keys_var(${_section} _int_key_list_var)
         ini_get_key_list_var(${__PREFIX} ${_section} _pub_key_list_var)
 
-        set(${_pub_key_list_var} ${${_int_key_list_var}} PARENT_SCOPE)
-
         # should we cache this section?
         _ini_list_contains(INI_CACHE_SECTIONS ${_section} _cache_this_section)
+
+        if(_cache_all)
+            set(_cache_this_section ON)
+        endif()
+
+        if(_cache_this_section)
+            set(${_pub_key_list_var} ${${_int_key_list_var}} CACHE INTERNAL "Cached section list")
+        else()
+            set(${_pub_key_list_var} ${${_int_key_list_var}} PARENT_SCOPE)
+        endif()
+
 
         message(STATUS "Cache section [${_section}] : ${_cache_this_section}")
 
@@ -564,14 +657,15 @@ function(parse_ini_file)
             endif()
 
             if(_cache_this_key)
-                set(${_pub_value_var} "${_out_str}" CACHE "Cached from ini file ${__FILE}" INTERNAL)
+                set(${_pub_value_var} "${_out_str}" CACHE INTERNAL "Cached from ini file ${__FILE}")
             else()
                 set(${_pub_value_var} "${_out_str}" PARENT_SCOPE)
             endif()
 
         endforeach()
-
     endforeach()
+
+    _ini_cache_mark_valid(${__PREFIX} ${__FILE})
 
     message(STATUS "Done")
 
